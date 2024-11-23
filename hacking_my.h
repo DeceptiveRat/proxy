@@ -14,7 +14,7 @@
  * It will make sure all byets are sent.
  * Returns 0 on error and 1 on success.
  */
-int sendString(int sockfd, char *buffer);
+int sendString(int sockfd, unsigned char *buffer);
 
 /*
  * Accepts a socket FD and a ptr to a destination.

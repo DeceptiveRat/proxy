@@ -18,8 +18,7 @@
 #define DESTINATION_PORT_LENGTH 5
 #define PORT "7890"
 
-pthread_mutex_t mutex_clientBuffer = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t mutex_serverBuffer = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_outputFile = PTHREAD_MUTEX_INITIALIZER;
 
 void handleConnection() // #handleConnection
 {
@@ -34,23 +33,23 @@ void handleConnection() // #handleConnection
     int socketToClient = returnSocketToClient(hostSocket);
 
     // print data from client ------------------------------------------------
-    char clientData[BUFFER_SIZE+1];
-	memset(clientData, '\0', BUFFER_SIZE);
-    int receiveLength = recv(socketToClient, &clientData, BUFFER_SIZE, 0);
+    char dataFromClient[BUFFER_SIZE+1];
+	memset(dataFromClient, '\0', BUFFER_SIZE);
+    int receiveLength = recv(socketToClient, &dataFromClient, BUFFER_SIZE, 0);
 
     if(receiveLength == -1)
         fatal("receiving from client");
 
     printf("Received %d bytes from client\n", receiveLength);
-    dump(clientData, receiveLength);
-	isHTTPS = isConnectMethod(clientData);
+    dump(dataFromClient, receiveLength);
+	isHTTPS = isConnectMethod(dataFromClient);
 
     char destinationName[DESTINATION_NAME_LENGTH + 1];
-    int nameOffset = getDestinationName(clientData, destinationName);
+    int nameOffset = getDestinationName(dataFromClient, destinationName);
 
     // find destination port number -------------------------------------
     char destinationPort[DESTINATION_PORT_LENGTH + 1];
-	getDestinationPort(clientData+nameOffset, destinationPort, isHTTPS);
+	getDestinationPort(dataFromClient+nameOffset, destinationPort, isHTTPS);
 
     // get destination information
     struct addrinfo destinationAddressInformation = returnDestinationAddressInfo(destinationName, destinationPort);
@@ -65,27 +64,44 @@ void handleConnection() // #handleConnection
 			fatal("sending 200 connection established");
 	}
 
-	char destinationData[BUFFER_SIZE+1];
-	destinationData[0] = '\0';
+	// set up arguments for the threads ---------------------------------------
+	char dataFromServer[BUFFER_SIZE+1];
+	dataFromServer[0] = '\0';
+	bool shutDown = false;
+	pthread_mutex_t mutex_clientBuffer = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_t mutex_serverBuffer = PTHREAD_MUTEX_INITIALIZER;
 
-	bool terminateThreads = false;
-	struct threadParameters args;
-	args.clientSocket = socketToClient;
-	args.serverSocket = socketToDestination;
-	args.clientDataBuffer = clientData;
-	args.serverDataBuffer = destinationData;
-	args.shutDown = &terminateThreads;
-	args.outputFilePtr = outputFilePtr;
+	struct threadParam serverArgs, clientArgs;
+	serverArgs.socket = socketToDestination;
+	serverArgs.writeBuffer = dataFromServer;
+	serverArgs.readBuffer = dataFromClient;
+	serverArgs.shutDown = &shutDown;
+	serverArgs.outputFilePtr = outputFilePtr;
+	strncpy(serverArgs.connectedTo, "server\0", 7);
+	serverArgs.mutex_writeBuffer = &mutex_serverBuffer;
+	serverArgs.mutex_readBuffer = &mutex_clientBuffer;
 
+	clientArgs.socket = socketToClient;
+	clientArgs.writeBuffer = dataFromClient;
+	clientArgs.readBuffer = dataFromServer;
+	clientArgs.shutDown = &shutDown;
+	clientArgs.outputFilePtr = outputFilePtr;
+	strncpy(clientArgs.connectedTo, "client\0", 7);
+	clientArgs.mutex_writeBuffer = &mutex_clientBuffer;
+	clientArgs.mutex_readBuffer = &mutex_serverBuffer;
+	// ------------------------------------------------------------------------
+
+	// create threads
 	pthread_t serverThread, clientThread;
-	pthread_create(&clientThread, NULL, clientFunction, &args);
-	pthread_create(&serverThread, NULL, serverFunction, &args);
+	pthread_create(&clientThread, NULL, threadFunction, &clientArgs);
+	pthread_create(&serverThread, NULL, threadFunction, &serverArgs);
 
 	pthread_join(clientThread, NULL);
 	pthread_join(serverThread, NULL);
 
-	printf("Value of errno: %d\n", errno);
-
+	pthread_mutex_destroy(&mutex_clientBuffer);
+	pthread_mutex_destroy(&mutex_serverBuffer);
+	pthread_mutex_destroy(&mutex_outputFile);
 	fclose(outputFilePtr);
     close(socketToDestination);
     close(socketToClient);
@@ -124,7 +140,7 @@ int returnListeningSocket() // #returnListeningSocket
     return hostSocket;
 }
 
-/* create, bind, and return a socket to the client */
+/* create, connect, and return a socket to the client */
 int returnSocketToClient(const int listeningSocket) // #returnSocketToClient
 {
     struct sockaddr clientAddress;
@@ -139,7 +155,7 @@ int returnSocketToClient(const int listeningSocket) // #returnSocketToClient
 
     if(inet_ntop(AF_INET, &clientAddress_in.sin_addr, clientAddressString, INET_ADDRSTRLEN) == NULL)
         fatal("converting client address to string");
-
+	
     printf("got connection from %s port %d\n", clientAddressString, clientAddress_in.sin_port);
 
     return socketToClient;
@@ -254,6 +270,7 @@ bool isNumber(const char* stringToCheck) // #isNumber
 
 	return true;
 }
+/*
 
 void* clientFunction(void *args) // #clientFunction
 {
@@ -266,6 +283,8 @@ void* clientFunction(void *args) // #clientFunction
 
 	char tempReadBuffer[BUFFER_SIZE+1];
 	ssize_t recvResult;
+	int zeroCount = 0;
+
 	while(!(*shutDown))
 	{
 		recvResult = recv(clientSocket, tempReadBuffer, BUFFER_SIZE, MSG_DONTWAIT);
@@ -285,19 +304,32 @@ void* clientFunction(void *args) // #clientFunction
 		// data read
 		else
 		{
-			printf("Read %ld bytes from client:\n", recvResult);
-			dump(tempReadBuffer, recvResult);
-			if(recvResult != 0)
-			{
-				fprintf(outputFilePtr, "Read %ld bytes from client:\n", recvResult);
-				dump_to_file(tempReadBuffer, recvResult, outputFilePtr);
-			}
 			// wait until buffer is empty (has been read by the server function
 			while(clientDataBuffer[0] != '\0')
 
 			pthread_mutex_lock(&mutex_clientBuffer);
+			// debug -------------------------
+			printf("Read %ld bytes from client:\n", recvResult);
+			dump(tempReadBuffer, recvResult);
+			if(recvResult != 0)
+			{
+				zeroCount = 0;
+				pthread_mutex_lock(&mutex_outputFile);
+				fprintf(outputFilePtr, "Read %ld bytes from client:\n", recvResult);
+				dump_to_file(tempReadBuffer, recvResult, outputFilePtr);
+				pthread_mutex_unlock(&mutex_outputFile);
+			}
+			if(recvResult == 0)
+				zeroCount++;
+			// ----------------------------------
 			strncpy(clientDataBuffer, tempReadBuffer, recvResult);
 			pthread_mutex_unlock(&mutex_clientBuffer);
+
+			if(zeroCount == 10)
+			{
+				*shutDown = true;
+				pthread_exit(NULL);
+			}
 		}
 
 		// if there is data from the server, forward it
@@ -308,13 +340,24 @@ void* clientFunction(void *args) // #clientFunction
 				*shutDown = true;
 				pthread_exit(NULL);
 			}
+
+			// debug ----------------
 			printf("Sent data from server buffer to client\n");
+			pthread_mutex_lock(&mutex_outputFile);
 			fprintf(outputFilePtr, "Sent data from server buffer to client\n");
+			pthread_mutex_unlock(&mutex_outputFile);
+			// ----------------------
+
 			pthread_mutex_lock(&mutex_serverBuffer);
 			serverDataBuffer[0] = '\0';
 			pthread_mutex_unlock(&mutex_serverBuffer);
+
+			// debug ----------------
 			printf("Set server buffer to empty\n");
+			pthread_mutex_lock(&mutex_outputFile);
 			fprintf(outputFilePtr, "Set server buffer to empty\n");
+			pthread_mutex_unlock(&mutex_outputFile);
+			// ----------------------
 		}
 	}
 
@@ -333,6 +376,7 @@ void* serverFunction(void* args) // #clientFunction
 
 	char tempReadBuffer[BUFFER_SIZE+1];
 	ssize_t recvResult;
+	int zeroCount = 0;
 	while(!(*shutDown))
 	{
 		recvResult = recv(serverSocket, tempReadBuffer, BUFFER_SIZE, MSG_DONTWAIT);
@@ -352,19 +396,34 @@ void* serverFunction(void* args) // #clientFunction
 		// data read
 		else
 		{
+			// wait until buffer is empty (has been read by the client function
+			while(serverDataBuffer[0] != '\0')
+
+			// debug ---------------------
+			pthread_mutex_lock(&mutex_outputFile);
 			printf("Read %ld bytes from server:\n", recvResult);
 			dump(tempReadBuffer, recvResult);
 			if(recvResult != 0)
 			{
+				zeroCount = 0;
 				fprintf(outputFilePtr, "Read %ld bytes from server:\n", recvResult);
 				dump_to_file(tempReadBuffer, recvResult, outputFilePtr);
+				pthread_mutex_unlock(&mutex_outputFile);
 			}
-			// wait until buffer is empty (has been read by the client function
-			while(serverDataBuffer[0] != '\0')
+
+			if(recvResult == 0)
+				zeroCount++;
+			// ----------------------------
 
 			pthread_mutex_lock(&mutex_serverBuffer);
 			strncpy(serverDataBuffer, tempReadBuffer, recvResult);
 			pthread_mutex_unlock(&mutex_serverBuffer);
+
+			if(zeroCount == 10)
+			{
+				*shutDown = true;
+				pthread_exit(NULL);
+			}
 		}
 
 		// if there is data from the client, forward it
@@ -375,16 +434,138 @@ void* serverFunction(void* args) // #clientFunction
 				*shutDown = true;
 				pthread_exit(NULL);
 			}
+			// debug ----------------------
+			pthread_mutex_lock(&mutex_outputFile);
 			printf("Sent data from client buffer to server\n");
 			fprintf(outputFilePtr, "Sent data from client buffer to server\n");
+			pthread_mutex_unlock(&mutex_outputFile);
+			// ---------------------------
+
 			pthread_mutex_lock(&mutex_clientBuffer);
+
 			clientDataBuffer[0] = '\0';
+
 			pthread_mutex_unlock(&mutex_clientBuffer);
+			
+			// debug ---------------------------
+			pthread_mutex_lock(&mutex_outputFile);
 			printf("Set client buffer to empty\n");
 			fprintf(outputFilePtr, "Set client buffer to empty\n");
+			pthread_mutex_unlock(&mutex_outputFile);
+			// ------------------------------
 		}
 	}
 
 	// clean up code
+	pthread_exit(NULL);
+}
+*/
+
+void* threadFunction(void* args) // #threadFunction
+{
+	// set up local variables with argument
+	struct threadParam parameters = *(struct threadParam*)args;
+	int socket = parameters.socket;
+	char* writeBuffer = parameters.writeBuffer;
+	char* readBuffer = parameters.readBuffer;
+	bool* shutDown = parameters.shutDown;
+	FILE* outputFilePtr = parameters.outputFilePtr;
+	char connectedTo[NAME_LENGTH+1];
+	memcpy(connectedTo, parameters.connectedTo, NAME_LENGTH+1);
+	pthread_mutex_t *mutex_writeBuffer = parameters.mutex_writeBuffer;
+	pthread_mutex_t *mutex_readBuffer = parameters.mutex_readBuffer;
+
+	char tempReadBuffer[BUFFER_SIZE+1];
+	ssize_t recvResult;
+
+	while(!(*shutDown))
+	{
+		recvResult = recv(socket, tempReadBuffer, BUFFER_SIZE, MSG_DONTWAIT);
+
+		if(recvResult == -1)
+		{
+			// error reading data
+			if(errno != EAGAIN && errno != EWOULDBLOCK)
+			{
+				*shutDown = true;
+				printf("Errno: %d\n", errno);
+				pthread_exit(NULL);
+			}
+			// no data to read 
+			else {}
+		}
+		// data read
+		else
+		{
+			// debug ---------------------
+			pthread_mutex_lock(&mutex_outputFile);
+			printf("Read %ld bytes from %s:\n", recvResult, connectedTo);
+			dump(tempReadBuffer, recvResult);
+			if(recvResult != 0)
+			{
+				fprintf(outputFilePtr, "Read %ld bytes from %s:\n", recvResult, connectedTo);
+				dump_to_file(tempReadBuffer, recvResult, outputFilePtr);
+			}
+			pthread_mutex_unlock(&mutex_outputFile);
+
+			if(recvResult == 0)
+			{
+				*shutDown = true;
+				printf("0 bytes received from %s\n", connectedTo);
+				pthread_exit(NULL);
+			}
+			// ----------------------------
+
+			// wait until buffer is empty before writing to it
+			while(writeBuffer[0] != '\0') {};
+
+			printf("attempting to acquire mutex for write buffer...(%s)\n", connectedTo);
+			pthread_mutex_lock(mutex_writeBuffer);
+			printf("acquired mutex for write buffer...(%s)\n", connectedTo);
+			strncpy(writeBuffer, tempReadBuffer, recvResult);
+			pthread_mutex_unlock(mutex_writeBuffer);
+			printf("unlocked mutex for write buffer...(%s)\n", connectedTo);
+
+			// debug ----------------------------------
+			pthread_mutex_lock(&mutex_outputFile);
+			printf("Wrote %ld bytes to buffer for data from %s\n", recvResult, connectedTo);
+			fprintf(outputFilePtr, "Wrote %ld bytes to buffer for data from %s\n", recvResult, connectedTo);
+			pthread_mutex_unlock(&mutex_outputFile);
+		}
+
+		// if there is data in the read buffer, send it
+		if(readBuffer[0] != '\0')
+		{
+			if(sendString(socket, readBuffer) == 0)
+			{
+				*shutDown = true;
+				printf("Exited %s...\n", connectedTo);
+				pthread_exit(NULL);
+			}
+			// debug ----------------------
+			pthread_mutex_lock(&mutex_outputFile);
+			printf("Sent data to %s\n", connectedTo);
+			fprintf(outputFilePtr, "Sent data to %s\n", connectedTo);
+			pthread_mutex_unlock(&mutex_outputFile);
+			// ---------------------------
+
+			printf("attempting to acquire mutex for read buffer...(%s)\n", connectedTo);
+			pthread_mutex_lock(mutex_readBuffer);
+			printf("acquired mutex for read buffer...(%s)\n", connectedTo);
+			readBuffer[0] = '\0';
+			pthread_mutex_unlock(mutex_readBuffer);
+			printf("unlocked mutex for read buffer...(%s)\n", connectedTo);
+			
+			// debug ---------------------------
+			pthread_mutex_lock(&mutex_outputFile);
+			printf("Set %s buffer to empty\n", connectedTo);
+			fprintf(outputFilePtr, "Set %s buffer to empty\n", connectedTo);
+			pthread_mutex_unlock(&mutex_outputFile);
+			// ------------------------------
+		}
+	}
+
+	// clean up code
+	printf("shutdown variable set\nshutting down %s...\n", connectedTo);
 	pthread_exit(NULL);
 }

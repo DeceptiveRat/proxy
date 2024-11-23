@@ -6,7 +6,7 @@
 
 #include "hacking_my.h"
 
-int sendString(int sockfd, char *buffer)
+int sendString(int sockfd, unsigned char *buffer)
 {
     int sentBytes, bytesToSend;
     bytesToSend = strlen((char*)buffer);
@@ -68,7 +68,7 @@ void dump(const char* dataBuffer, const long long length)
     {
         for(int i = 0; i < 15; i++)
         {
-            if(printLocation + i <= length)
+            if(printLocation + i < length)
                 printf("%02x ", (unsigned char)dataBuffer[printLocation + i]);
 
             else
@@ -79,7 +79,7 @@ void dump(const char* dataBuffer, const long long length)
 
         for(int i = 0; i < 15; i++)
         {
-            if(printLocation + i <= length)
+            if(printLocation + i < length)
             {
                 byte = dataBuffer[printLocation + i];
 
@@ -98,7 +98,7 @@ void dump(const char* dataBuffer, const long long length)
         }
 
         printf("\n");
-        printLocation += 15;
+        printLocation += 16;
     }
 }
 
@@ -111,7 +111,7 @@ void dump_to_file(const unsigned char* dataBuffer, const unsigned int length, FI
     {
         for(int i = 0; i < 16; i++)
         {
-            if(printLocation + i <= length)
+            if(printLocation + i < length)
                 fprintf(outputFilePtr, "%02x ", dataBuffer[printLocation + i]);
 
             else
@@ -122,7 +122,7 @@ void dump_to_file(const unsigned char* dataBuffer, const unsigned int length, FI
 
         for(int i = 0; i < 15; i++)
         {
-            if(printLocation + i <= length)
+            if(printLocation + i < length)
             {
                 byte = dataBuffer[printLocation + i];
 
@@ -141,7 +141,7 @@ void dump_to_file(const unsigned char* dataBuffer, const unsigned int length, FI
         }
 
         fprintf(outputFilePtr, "\n");
-        printLocation += 15;
+        printLocation += 16;
     }
 }
 
@@ -151,7 +151,7 @@ void hex_dump_only(const unsigned char* databuffer, const unsigned int length, F
 
     while(printLocation <= length)
     {
-        fprintf(outputFilePtr, "%02x ", databuffer[printLocation]);
+        fprintf(outputFilePtr, "%02x", databuffer[printLocation]);
         printLocation++;
     }
 
