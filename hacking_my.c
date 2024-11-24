@@ -6,7 +6,7 @@
 
 #include "hacking_my.h"
 
-int sendString(int sockfd, unsigned char *buffer, int bytesToSend)
+int sendString(int sockfd, const unsigned char *buffer, int bytesToSend)
 {
     int sentBytes;
 
@@ -58,17 +58,17 @@ int recvLine(int sockfd, unsigned char *destBuffer)
     return 0;
 }
 
-void dump(const char* dataBuffer, const long long length)
+void dump(const unsigned char* dataBuffer, const long long length)
 {
     unsigned int printLocation = 0;
     char byte;
 
     while(printLocation <= length)
     {
-        for(int i = 0; i < 15; i++)
+        for(int i = 0; i < 16; i++)
         {
             if(printLocation + i < length)
-                printf("%02x ", (unsigned char)dataBuffer[printLocation + i]);
+                printf("%02x ", dataBuffer[printLocation + i]);
 
             else
                 printf("   ");
@@ -76,7 +76,7 @@ void dump(const char* dataBuffer, const long long length)
 
         printf(" | ");
 
-        for(int i = 0; i < 15; i++)
+        for(int i = 0; i < 16; i++)
         {
             if(printLocation + i < length)
             {
@@ -119,7 +119,7 @@ void dump_to_file(const unsigned char* dataBuffer, const unsigned int length, FI
 
         fprintf(outputFilePtr, " | ");
 
-        for(int i = 0; i < 15; i++)
+        for(int i = 0; i < 16; i++)
         {
             if(printLocation + i < length)
             {
