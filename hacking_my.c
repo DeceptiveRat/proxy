@@ -6,10 +6,9 @@
 
 #include "hacking_my.h"
 
-int sendString(int sockfd, unsigned char *buffer)
+int sendString(int sockfd, unsigned char *buffer, int bytesToSend)
 {
-    int sentBytes, bytesToSend;
-    bytesToSend = strlen((char*)buffer);
+    int sentBytes;
 
     while(bytesToSend > 0)
     {

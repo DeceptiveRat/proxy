@@ -14,7 +14,7 @@
  * It will make sure all byets are sent.
  * Returns 0 on error and 1 on success.
  */
-int sendString(int sockfd, unsigned char *buffer);
+int sendString(int sockfd, unsigned char *buffer, int bytesToSend);
 
 /*
  * Accepts a socket FD and a ptr to a destination.
@@ -34,6 +34,7 @@ void dump_to_file(const unsigned char* dataBuffer, const unsigned int length, FI
 void hex_dump_only(const unsigned char* databuffer, const unsigned int length, FILE* outputFilePtr);
 
 void fatal(char* message);
+void fatal_cleanup(char* message, struct connectionResources connections, int connectionCount);
 
 // ------------------------------------------------------- #variables -------------------------------------------------------------- //
 
