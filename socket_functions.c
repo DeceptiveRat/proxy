@@ -31,7 +31,7 @@ void setDomainNames() // #setDomainNames
     fclose(domainNameFile);
 }
 
-void setupConnectionResources(struct connectionResources* connections, int connectionCount, FILE* globalOutputFilePtr) // #setupConnectionResources
+void setupConnectionResources(struct connectionResources* connections, int connectionCount, FILE* globalOutputFilePtr, struct requestCache* cachePtr) // #setupConnectionResources
 {
     for(int i = 0; i < connectionCount; i++)
     {
@@ -49,38 +49,80 @@ void setupConnectionResources(struct connectionResources* connections, int conne
         connections[i].outputFilePtr = outputFilePtr;
 
         // set up server arguments
+		// connection info
         connections[i].serverArgs.socket = &connections[i].serverSocket;
         connections[i].serverArgs.connectionID = i;
+        memcpy(connections[i].serverArgs.connectedTo, "server\0", 7);
+        connections[i].serverArgs.shutDown = &connections[i].shutDown;
+		// read/write buffer info
         connections[i].serverArgs.writeBufferSize = &connections[i].dataFromServerSize;
         connections[i].serverArgs.readBufferSize = &connections[i].dataFromClientSize;
         connections[i].serverArgs.writeBuffer = connections[i].dataFromServer;
         connections[i].serverArgs.readBuffer = connections[i].dataFromClient;
-        connections[i].serverArgs.shutDown = &connections[i].shutDown;
+		// file pointers
         connections[i].serverArgs.localOutputFilePtr = outputFilePtr;
         connections[i].serverArgs.globalOutputFilePtr = globalOutputFilePtr;
-        memcpy(connections[i].serverArgs.connectedTo, "server\0", 7);
+		// mutex locks
         connections[i].serverArgs.mutex_writeBufferSize = &connections[i].mutex_dataFromServerSize;
         connections[i].serverArgs.mutex_readBufferSize = &connections[i].mutex_dataFromClientSize;
+		// cache info
+		connections[i].serverArgs.cachePtr = cachePtr;
 
         // set up client arguments
+		// connection info
         connections[i].clientArgs.socket = &connections[i].clientSocket;
         connections[i].clientArgs.connectionID = i;
+        memcpy(connections[i].clientArgs.connectedTo, "client\0", 7);
+        connections[i].clientArgs.shutDown = &connections[i].shutDown;
+		// read/write buffer info
         connections[i].clientArgs.writeBufferSize = &connections[i].dataFromClientSize;
         connections[i].clientArgs.readBufferSize = &connections[i].dataFromServerSize;
         connections[i].clientArgs.writeBuffer = connections[i].dataFromClient;
         connections[i].clientArgs.readBuffer = connections[i].dataFromServer;
-        connections[i].clientArgs.shutDown = &connections[i].shutDown;
+		// file pointers
         connections[i].clientArgs.localOutputFilePtr = outputFilePtr;
         connections[i].clientArgs.globalOutputFilePtr = globalOutputFilePtr;
-        memcpy(connections[i].clientArgs.connectedTo, "client\0", 7);
+		// mutex locks
         connections[i].clientArgs.mutex_writeBufferSize = &connections[i].mutex_dataFromClientSize;
         connections[i].clientArgs.mutex_readBufferSize = &connections[i].mutex_dataFromServerSize;
+		// cache info
+		connections[i].clientArgs.cachePtr = NULL;
     }
+}
+
+pthread_mutex_t* setupMutexes()
+{
+	pthread_mutex_t *mutexList = NULL;
+	mutexList = (pthread_mutex_t*)malloc(sizeof(pthread_mutex_t)*MAX_CONNECTION_COUNT*3);
+	if(mutexList == NULL)
+		fatal("creating mutexes");
+	for(int i = 0;i<MAX_CONNECTION_COUNT*3;i++)
+	{
+		if(pthread_mutex_init(&mutexList[i], NULL) != 0)
+			fatal("initializing mutexes");
+	}
+	
+	return mutexList;
+}
+
+void cleanMutexes(pthread_mutex_t* mutexes)
+{
+	for(int i = 0;i<MAX_CONNECTION_COUNT*2;i++)
+	{
+		if(pthread_mutex_destroy(&mutexes[i]) != 0)
+			fatal("destroying mutexes");
+	}
+	free(mutexes);
 }
 
 void handleConnection() // #handleConnection
 {
     setDomainNames();
+
+	struct requestCache* cachePtr;
+	cachePtr = (struct requestCache*)malloc(sizeof(struct requestCache)*CACHE_SIZE);
+	if(cachePtr == NULL)
+		fatal("allocating memory for cache");
 
     FILE* outputFilePtr = 0;
     outputFilePtr = fopen("all exchanges.log", "w");
@@ -90,11 +132,7 @@ void handleConnection() // #handleConnection
 
     // initialize local variables
     const unsigned char connectionEstablishedResponse[CONNECTION_ESTABLISHED_MESSAGE_LENGTH + 1] = "HTTP/1.1 200 Connection Established\r\n\r\n\0";
-    static pthread_mutex_t mutexes[MAX_CONNECTION_COUNT * 2] =
-    {
-        PTHREAD_MUTEX_INITIALIZER,
-        PTHREAD_MUTEX_INITIALIZER
-    };
+	pthread_mutex_t *mutexes = setupMutexes();
     struct connectionResources connections[MAX_CONNECTION_COUNT];
 
     for(int i = 0; i < MAX_CONNECTION_COUNT; i++)
@@ -103,7 +141,7 @@ void handleConnection() // #handleConnection
         connections[i].mutex_dataFromServerSize = mutexes[i * 2 + 1];
     }
 
-    setupConnectionResources(connections, MAX_CONNECTION_COUNT, outputFilePtr);
+    setupConnectionResources(connections, MAX_CONNECTION_COUNT, outputFilePtr, cachePtr);
     int connectionCount = 0;
 
     // initialize variables for listening thread
@@ -161,6 +199,8 @@ void handleConnection() // #handleConnection
                 cleanupConnections(connections, MAX_CONNECTION_COUNT);
                 pthread_mutex_destroy(&mutex_outputFile);
                 fclose(outputFilePtr);
+				free(cachePtr);
+				cleanMutexes(mutexes);
                 fatal("receiving from client");
             }
 
@@ -271,6 +311,8 @@ void handleConnection() // #handleConnection
                     cleanupConnections(connections, MAX_CONNECTION_COUNT);
                     pthread_mutex_destroy(&mutex_outputFile);
                     fclose(outputFilePtr);
+					free(cachePtr);
+					cleanMutexes(mutexes);
                     fatal("sending 200 connection established");
                 }
 
@@ -303,8 +345,10 @@ void handleConnection() // #handleConnection
     for(int i = 0; i < MAX_CONNECTION_COUNT * 2; i++)
         pthread_mutex_destroy(&mutexes[i]);
 
+	free(cachePtr);
     cleanupConnections(connections, MAX_CONNECTION_COUNT);
     fclose(outputFilePtr);
+	cleanMutexes(mutexes);
     pthread_mutex_destroy(&mutex_outputFile);
 }
 
@@ -388,6 +432,7 @@ int getDestinationName(const unsigned char* receivedData, char* destinationNameB
         domainNameIndex++;
     }
 
+	// TODO: change for domain names that aren't exactly 3 characters long
     destinationNameEnd += 4;
     destinationNameLength = destinationNameEnd - destinationNameStart;
 
@@ -509,22 +554,34 @@ void* threadFunction(void* args) // #threadFunction
 {
     // set up local variables with argument
     struct threadParameters parameters = *(struct threadParameters*)args;
+	// connection info
     const int socket = *parameters.socket;
     const int ID = parameters.connectionID;
+    char connectedTo[NAME_LENGTH + 1];
+    memcpy(connectedTo, parameters.connectedTo, NAME_LENGTH + 1);
+    bool* shutDown = parameters.shutDown;
+	// read/write buffer info
     int* readBufferSize = parameters.readBufferSize;
     int* writeBufferSize = parameters.writeBufferSize;
     unsigned char* writeBuffer = parameters.writeBuffer;
     const unsigned char* readBuffer = parameters.readBuffer;
-    bool* shutDown = parameters.shutDown;
+	// file pointers
     FILE* localOutputFilePtr = parameters.localOutputFilePtr;
     FILE* globalOutputFilePtr = parameters.globalOutputFilePtr;
-    char connectedTo[NAME_LENGTH + 1];
-    memcpy(connectedTo, parameters.connectedTo, NAME_LENGTH + 1);
+	// mutex locks
     pthread_mutex_t *mutex_writeBuffer = parameters.mutex_writeBufferSize;
     pthread_mutex_t *mutex_readBuffer = parameters.mutex_readBufferSize;
+	// cache info
+	struct requestCache* cachePtr = parameters.cachePtr;
 
     unsigned char tempReadBuffer[BUFFER_SIZE + 1];
+	char requestedObject[OBJECT_NAME_LENGTH];
+	int cacheOffset;
+	unsigned char* readFromCache;
+	int readCount = 0;
     ssize_t recvResult;
+	bool clientConnected = (connectedTo[0] == 'c')?(true):(false);
+	bool serverConnected = (connectedTo[0] == 's')?(true):(false);
 
     while(!(*shutDown))
     {
@@ -573,44 +630,80 @@ void* threadFunction(void* args) // #threadFunction
             pthread_mutex_unlock(&mutex_outputFile);
             // ----------------------------
 
+			if(clientConnected)
+			{
+				getRequestedObject(tempReadBuffer, requestedObject);
+				// GET request && object found
+				if(requestedObject[0] != '\0')
+				{
+					readCount = isInCache(cachePtr, requestedObject, readFromCache);
+					// TODO this assumes client doesn't request consecutively without getting a response from the server. If it does, data for first request may be sent after the data for the second request.
+					// data is in cache
+					if(readCount != 0)
+					{
+						// debug ---------------------------------------
+						pthread_mutex_lock(&mutex_outputFile);
+						printf("[%d - %s] found %d bytes in cache. Sending reply from cache instead:\n", ID, connectedTo, readCount);
+						dump(readFromCache, readCount);
+						fprintf(globalOutputFilePtr, "[%d - %s] found %d bytes in cache. Sending reply from cache instead:\n", ID, connectedTo, readCount);
+						dump_to_file(readFromCache, readCount, globalOutputFilePtr);
+						fprintf(localOutputFilePtr, "[%d - %s] found %d bytes in cache. Sending reply from cache instead:\n", ID, connectedTo, readCount);
+						dump_to_file(readFromCache, readCount, localOutputFilePtr);
+						pthread_mutex_unlock(&mutex_outputFile);
+						// -----------------------------------------------
+
+						sendString(socket, readFromCache, readCount);
+						// reset value after use
+						readCount = 0;
+						readFromCache = NULL;
+
+						// set cache offset to -1 indicating no need to cache this request
+						cacheOffset = -1;
+
+						// don't write to buffer
+						continue;
+					}
+					// data not cached, set up parameters so it is cached upon reception
+					else
+					{
+						cacheOffset = getHashValue(requestedObject);
+					}
+				}
+			}
+
             // wait until buffer is empty before writing to it
             while(*writeBufferSize != 0) {};
 
             // write to buffer and change buffer size
             pthread_mutex_lock(mutex_writeBuffer);
-
             memcpy(writeBuffer, tempReadBuffer, recvResult);
-
             *writeBufferSize = recvResult;
-
             pthread_mutex_unlock(mutex_writeBuffer);
 
             // debug ----------------------------------
             pthread_mutex_lock(&mutex_outputFile);
-
             printf("[%d - %s] Wrote %ld bytes\n", ID, connectedTo, recvResult);
-
             fprintf(globalOutputFilePtr, "[%d - %s] Wrote %ld bytes\n", ID, connectedTo, recvResult);
-
             fprintf(localOutputFilePtr, "[%d - %s] Wrote %ld bytes\n", ID, connectedTo, recvResult);
-
             pthread_mutex_unlock(&mutex_outputFile);
         }
 
         // if there is data in the read buffer, send it
         if(*readBufferSize != 0)
         {
-            pthread_mutex_lock(&mutex_outputFile);
-            printf("[%d - %s] dump before send:\n", ID, connectedTo);
-            fprintf(globalOutputFilePtr, "[%d - %s] dump before send:\n", ID, connectedTo);
-            fprintf(localOutputFilePtr, "[%d - %s] dump before send:\n", ID, connectedTo);
-            dump(readBuffer, *readBufferSize);
-            dump_to_file(readBuffer, *readBufferSize, globalOutputFilePtr);
-            dump_to_file(readBuffer, *readBufferSize, localOutputFilePtr);
-            printf("\n");
-            fprintf(globalOutputFilePtr, "\n");
-            fprintf(localOutputFilePtr, "\n");
-            pthread_mutex_unlock(&mutex_outputFile);
+			// cache first if cache offset is not -1;
+			if(clientConnected && cacheOffset != -1)
+			{
+				saveToCache(cachePtr + cacheOffset, readBuffer, *readBufferSize);
+				pthread_mutex_lock(&mutex_outputFile);
+				printf("[%d - %s] saved to cache:\n", ID, connectedTo);
+				dump(readFromCache, *readBufferSize);
+				fprintf(globalOutputFilePtr, "[%d - %s] saved to cache:\n", ID, connectedTo);
+				dump_to_file(readFromCache, *readBufferSize, globalOutputFilePtr);
+				fprintf(localOutputFilePtr, "[%d - %s] saved to cache:\n", ID, connectedTo);
+				dump_to_file(readFromCache, *readBufferSize, localOutputFilePtr);
+				pthread_mutex_unlock(&mutex_outputFile);
+			}
 
             if(sendString(socket, readBuffer, *readBufferSize) == 0)
             {
@@ -716,4 +809,66 @@ void cleanupConnections(struct connectionResources* conRes, int connectionCount)
         if(result == EBUSY)
             pthread_join(conRes[i].serverThread, NULL);
     }
+}
+
+/*
+ * requested object has to be null terminated
+ * change to start from after "http://" to skip redundant calculations
+ */
+int getHashValue(const char* requestedObject) // #getHashValue
+{
+	int nameLength = strlen(requestedObject);
+	int hashValue = 0;
+	for(int i = 0;i<nameLength;i++)
+	{
+		hashValue += tolower(requestedObject[i]) -  'a';
+		hashValue *= 31;
+		hashValue %= CACHE_SIZE;
+	}
+
+	return hashValue;
+}
+
+void getRequestedObject(const unsigned char* requestMessage, char* requestedObject) // #getRequestedObject
+{
+	if(strstr(requestMessage, "GET ") == NULL)
+	{
+		requestedObject[0] = '\0';
+		return;
+	}
+
+	char* requestedObjectEnd = strstr((char*)requestMessage, " HTTP/");
+	if(requestedObjectEnd == NULL)
+	{
+		requestedObject[0] = '\0';
+		return;
+	}
+	else
+	{
+		int nameLength = requestedObjectEnd - (char*)requestMessage;
+		strncpy(requestedObject, requestMessage, nameLength);
+		requestedObject[nameLength] = '\0';
+		return;
+	}
+}
+
+void saveToCache(struct requestCache *cachePtr, const unsigned char* dataToCache, int dataLength) // #saveToCache
+{
+	memcpy(cachePtr->value+cachePtr->valueLength, dataToCache, dataLength);
+	cachePtr->valueLength += dataLength;
+}
+
+int isInCache(struct requestCache *cachePtr, const char* requestedObject, unsigned char* pointerToData) // #isInCache
+{
+	int key = getHashValue(requestedObject);
+	if(cachePtr[key].valueLength != 0)
+	{
+		pointerToData = cachePtr[key].value;
+		return cachePtr[key].valueLength;
+	}
+	else
+	{
+		pointerToData = NULL;
+		return 0;
+	}
 }
