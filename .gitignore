@@ -1,5 +1,4 @@
 *.txt
 *.log
 *.swp
-*.h.swp
-*.c.swp
+*.dat
