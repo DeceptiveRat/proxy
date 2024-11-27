@@ -251,13 +251,14 @@ void handleConnection() // #handleConnection
 					temp->clientKey.e += key[i] - '0';
 				}
 
-				for(int i = 14 + keyEnd - key; i < receiveLength; i++)
+				for(int i = 14 + keyEnd - key; i < receiveLength - 1; i++)
 
 				{
 					temp->clientKey.n *= 10;
 					temp->clientKey.n += temp->dataFromClient[i] - '0';
 				}
-				sendString(temp->clientSocket, "17 247", 6);
+				printf("Got Key. e: %d, n: %d\n", temp->clientKey.e, temp->clientKey.n);
+				sendString(temp->clientSocket, "17 247\n", 7);
 				receiveLength = recv(temp->clientSocket, temp->dataFromClient, BUFFER_SIZE, 0);
 
 				if(receiveLength == -1)
@@ -1041,11 +1042,13 @@ void* listeningThreadFunction(void* args) // #listeningThreadFunction
 	bool* shutDown = parameter.shutDown;
 	pthread_mutex_t* mutex_acceptedSocket = parameter.mutex_acceptedSocket;
 
+/*
 	// set up timeout
 	struct timeval tv;
 	tv.tv_sec = 0;
 	tv.tv_usec = SERVER_TIMEOUT_VALUE;
 	setsockopt(listeningSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+*/
 
 	int tempAcceptedSocket = 0;
 
