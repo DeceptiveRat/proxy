@@ -6,6 +6,8 @@
 #include <ctype.h>
 #include <netdb.h>
 
+#include "RSA.h"
+
 #define NAME_LENGTH 7
 #define FILE_NAME_LENGTH 40
 #define BUFFER_SIZE 4096
@@ -23,7 +25,7 @@
 #define CACHE_FILE_NAME "cache.txt"
 #define SERVER_TIMEOUT_VALUE 2
 #define CONNECTION_TIMEOUT_VALUE 2
-#define TIMEOUT_COUNT 5000
+#define TIMEOUT_COUNT 20000 // 5000 for quick
 
 struct threadParameters
 {
@@ -33,6 +35,7 @@ struct threadParameters
 	char connectedTo[NAME_LENGTH+1];
 	bool* shutDown;
 	bool isHTTPS;
+	struct keyPair* clientKey;
 
 	// read/write buffer info
 	int* writeBufferSize;
@@ -69,6 +72,7 @@ struct connectionResources
 	int clientSocket;
 	int serverSocket;
 	bool shutDown;
+	struct keyPair clientKey;
 	
 	// buffer info
 	int dataFromClientSize;

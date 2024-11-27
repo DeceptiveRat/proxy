@@ -54,6 +54,7 @@ void setupConnectionResources(struct connectionResources* connections, int conne
 		connections[i].serverArgs.connectionID = i;
 		memcpy(connections[i].serverArgs.connectedTo, "server\0", 7);
 		connections[i].serverArgs.shutDown = &connections[i].shutDown;
+		connections[i].serverArgs.clientKey = NULL;
 		// read/write buffer info
 		connections[i].serverArgs.writeBufferSize = &connections[i].dataFromServerSize;
 		connections[i].serverArgs.readBufferSize = &connections[i].dataFromClientSize;
@@ -74,6 +75,7 @@ void setupConnectionResources(struct connectionResources* connections, int conne
 		connections[i].clientArgs.connectionID = i;
 		memcpy(connections[i].clientArgs.connectedTo, "client\0", 7);
 		connections[i].clientArgs.shutDown = &connections[i].shutDown;
+		connections[i].clientArgs.clientKey = &connections[i].clientKey;
 		// read/write buffer info
 		connections[i].clientArgs.writeBufferSize = &connections[i].dataFromClientSize;
 		connections[i].clientArgs.readBufferSize = &connections[i].dataFromServerSize;
@@ -118,8 +120,15 @@ void cleanMutexes(pthread_mutex_t* mutexes)
 	free(mutexes);
 }
 
+struct keyPair proxyKey;
 void handleConnection() // #handleConnection
 {
+	proxyKey.e = 17;
+	int p = 13;
+	int q = 19;
+	proxyKey.d = getDecryptionKey(proxyKey.e, getPhi(p, q));
+	proxyKey.n = p*q;
+
 	setDomainNames();
 
 	struct requestCache* cachePtr;
@@ -138,7 +147,7 @@ void handleConnection() // #handleConnection
 		fatal("opening file");
 
 	// initialize local variables
-	const unsigned char connectionEstablishedResponse[CONNECTION_ESTABLISHED_MESSAGE_LENGTH + 1] = "HTTP/1.1 200 Connection Established\r\n\r\n\0";
+	unsigned char connectionEstablishedResponse[CONNECTION_ESTABLISHED_MESSAGE_LENGTH + 1] = "HTTP/1.1 200 Connection Established\r\n\r\n\0";
 	pthread_mutex_t *mutexes = setupMutexes();
 	struct connectionResources connections[MAX_CONNECTION_COUNT];
 
@@ -209,6 +218,7 @@ void handleConnection() // #handleConnection
 					close(temp->clientSocket);
 					continue;
 				}
+
 				// clean up code
 				for(int i = 0; i < MAX_CONNECTION_COUNT; i++)
 					connections[i].shutDown = true;
@@ -219,11 +229,73 @@ void handleConnection() // #handleConnection
 				//cleanupConnections(connections, connectionCount);
 				pthread_mutex_destroy(&mutex_outputFile);
 				fclose(outputFilePtr);
+
 				if(saveCacheToFile(cachePtr) == -1)
 					printf("error saving cache\n");
+
 				free(cachePtr);
 				cleanMutexes(mutexes);
 				fatal("receiving from client");
+			}
+
+			// TODO change for longer key sizes
+			if(strstr(temp->dataFromClient, "KEY EXCHANGE") != NULL)
+			{
+				char *key = strstr(temp->dataFromClient, "KEY EXCHANGE");
+				key += 13;
+				char *keyEnd = strstr(key, " ");
+
+				for(int i = 0; i < keyEnd - key; i++)
+				{
+					temp->clientKey.e *= 10;
+					temp->clientKey.e += key[i] - '0';
+				}
+
+				for(int i = 14 + keyEnd - key; i < receiveLength; i++)
+
+				{
+					temp->clientKey.n *= 10;
+					temp->clientKey.n += temp->dataFromClient[i] - '0';
+				}
+				sendString(temp->clientSocket, "17 247", 6);
+				receiveLength = recv(temp->clientSocket, temp->dataFromClient, BUFFER_SIZE, 0);
+
+				if(receiveLength == -1)
+				{
+					if(errno == EAGAIN || errno == EWOULDBLOCK)
+					{
+						pthread_mutex_lock(&mutex_outputFile);
+						printf("[   main   ] lost connection with %d:\n", connectionCount);
+						fprintf(temp->outputFilePtr, "[   main   ] lost connection with %d:\n", connectionCount);
+						fprintf(outputFilePtr, "[   main   ] lost connection with %d:\n", connectionCount);
+						printf("[   main   ] resetting connection...\n");
+						fprintf(temp->outputFilePtr, "[   main   ] resetting connection...\n");
+						fprintf(outputFilePtr, "[   main   ] resetting connection...\n");
+						pthread_mutex_unlock(&mutex_outputFile);
+						close(temp->clientSocket);
+						continue;
+					}
+
+					// clean up code
+					for(int i = 0; i < MAX_CONNECTION_COUNT; i++)
+						connections[i].shutDown = true;
+
+					for(int i = 0; i < MAX_CONNECTION_COUNT * 2; i++)
+						pthread_mutex_destroy(&mutexes[i]);
+
+					//cleanupConnections(connections, connectionCount);
+					pthread_mutex_destroy(&mutex_outputFile);
+					fclose(outputFilePtr);
+
+					if(saveCacheToFile(cachePtr) == -1)
+						printf("error saving cache\n");
+
+					free(cachePtr);
+					cleanMutexes(mutexes);
+					fatal("receiving from client");
+				}
+
+				decrypt(temp->dataFromClient, proxyKey.n, proxyKey.d, receiveLength);
 			}
 
 			pthread_mutex_lock(&mutex_outputFile);
@@ -327,6 +399,8 @@ void handleConnection() // #handleConnection
 			{
 				temp->clientArgs.isHTTPS = true;
 				temp->serverArgs.isHTTPS = true;
+
+				encrypt(connectionEstablishedResponse, temp->clientKey.n, temp->clientKey.e, CONNECTION_ESTABLISHED_MESSAGE_LENGTH);
 				if(sendString(temp->clientSocket, connectionEstablishedResponse, CONNECTION_ESTABLISHED_MESSAGE_LENGTH) == 0)
 				{
 					// clean up code
@@ -339,8 +413,10 @@ void handleConnection() // #handleConnection
 					//cleanupConnections(connections, connectionCount);
 					pthread_mutex_destroy(&mutex_outputFile);
 					fclose(outputFilePtr);
+
 					if(saveCacheToFile(cachePtr) == -1)
 						printf("error saving cache\n");
+
 					free(cachePtr);
 					cleanMutexes(mutexes);
 					fatal("sending 200 connection established");
@@ -356,6 +432,7 @@ void handleConnection() // #handleConnection
 					temp->dataFromClientSize = 0;
 				}
 			}
+
 			else
 			{
 				temp->clientArgs.isHTTPS = false;
@@ -380,7 +457,7 @@ void handleConnection() // #handleConnection
 	// clean up code
 	for(int i = 0; i < MAX_CONNECTION_COUNT * 2; i++)
 		pthread_mutex_destroy(&mutexes[i]);
-	
+
 	if(saveCacheToFile(cachePtr) == -1)
 		printf("error saving cache\n");
 
@@ -424,38 +501,38 @@ int returnListeningSocket() // #returnListeningSocket
 }
 
 /*
- * create, connect, and return a socket to the client 
+ * create, connect, and return a socket to the client
  * returns -1 for timeout, -2 for error accepting, -3 for error finding client addres information
  */
 int returnSocketToClient(const int listeningSocket) // #returnSocketToClient
 {
-	// set up timeout
-	struct timeval tv;
-	tv.tv_sec = 0;
-	tv.tv_usec = SERVER_TIMEOUT_VALUE;
-	setsockopt(listeningSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-	int timeoutCount = 0; 
+	int timeoutCount = 0;
 
 	struct sockaddr clientAddress;
 	socklen_t sin_size = sizeof(struct sockaddr);
 	int socketToClient;
+
 	while(1)
 	{
 		if(timeoutCount >= TIMEOUT_COUNT)
 		{
 			return -1;
 		}
+
 		socketToClient = accept(listeningSocket, &clientAddress, &sin_size);
+
 		if(socketToClient == -1)
 		{
 			if(errno == EAGAIN || errno == EWOULDBLOCK)
 				timeoutCount++;
+
 			else
 			{
 				printf("errno %d: ", errno);
 				return -2;
 			}
 		}
+
 		// got connection
 		else
 		{
@@ -630,6 +707,7 @@ void* threadFunction(void* args) // #threadFunction
 	memcpy(connectedTo, parameters.connectedTo, NAME_LENGTH + 1);
 	bool* shutDown = parameters.shutDown;
 	bool isHTTPS = parameters.isHTTPS;
+	struct keyPair clientKey= *parameters.clientKey;
 	// read/write buffer info
 	int* readBufferSize = parameters.readBufferSize;
 	int* writeBufferSize = parameters.writeBufferSize;
@@ -655,14 +733,16 @@ void* threadFunction(void* args) // #threadFunction
 	tv.tv_sec = 0;
 	tv.tv_usec = CONNECTION_TIMEOUT_VALUE;
 	setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-	int timeoutCount = 0; 
+	int timeoutCount = 0;
 
 	int cacheOffset;
 	int cacheOffsetWithData = -1;
+
 	if(isHTTPS || !clientConnected)
 		cacheOffset = -1;
+
 	// if not HTTPS && client
-	else 
+	else
 	{
 		getRequestedObject(writeBuffer, requestedObject);
 
@@ -678,6 +758,7 @@ void* threadFunction(void* args) // #threadFunction
 			// -----------------------------------------------
 
 			readCount = isInCache(cachePtr, requestedObject, &readFromCache);
+
 			// item in cache
 			if(readCount != 0)
 			{
@@ -695,6 +776,7 @@ void* threadFunction(void* args) // #threadFunction
 				cacheOffsetWithData = -1;
 				// -----------------------------------------------
 
+				encrypt(readFromCache, clientKey.n, clientKey.e, readCount);
 				sendString(socket, readFromCache, readCount);
 				// reset value after use
 				readCount = 0;
@@ -703,6 +785,7 @@ void* threadFunction(void* args) // #threadFunction
 				// set cache offset to -1 indicating no need to cache this request
 				cacheOffset = -1;
 			}
+
 			else
 			{
 				// debug ---------------------------------------
@@ -720,6 +803,7 @@ void* threadFunction(void* args) // #threadFunction
 				cachePtr[cacheOffset].objectNameLength = strlen(requestedObject);
 			}
 		}
+
 		else
 		{
 			cacheOffset = -1;
@@ -741,6 +825,7 @@ void* threadFunction(void* args) // #threadFunction
 			pthread_mutex_unlock(&mutex_outputFile);
 			pthread_exit(NULL);
 		}
+
 		recvResult = recv(socket, tempReadBuffer, BUFFER_SIZE, 0);
 
 		if(recvResult == -1)
@@ -766,6 +851,8 @@ void* threadFunction(void* args) // #threadFunction
 		else
 		{
 			timeoutCount = 0;
+			decrypt(tempReadBuffer, proxyKey.n, proxyKey.d, recvResult);
+
 			// debug ---------------------
 			if(recvResult == 0)
 			{
@@ -822,6 +909,7 @@ void* threadFunction(void* args) // #threadFunction
 						cacheOffsetWithData = -1;
 						// -----------------------------------------------
 
+						encrypt(readFromCache, clientKey.n, clientKey.e, readCount);
 						sendString(socket, readFromCache, readCount);
 						// reset value after use
 						readCount = 0;
@@ -896,7 +984,12 @@ void* threadFunction(void* args) // #threadFunction
 				pthread_mutex_unlock(&mutex_outputFile);
 			}
 
-			if(sendString(socket, readBuffer, *readBufferSize) == 0)
+			memcpy(tempReadBuffer, readBuffer, *readBufferSize);
+			// encrypt before sending if it is for the client
+			if(clientConnected)
+				encrypt(tempReadBuffer, clientKey.n, clientKey.e, *readBufferSize);
+
+			if(sendString(socket, tempReadBuffer, *readBufferSize) == 0)
 			{
 				pthread_mutex_lock(&mutex_outputFile);
 				*shutDown = true;
@@ -948,24 +1041,33 @@ void* listeningThreadFunction(void* args) // #listeningThreadFunction
 	bool* shutDown = parameter.shutDown;
 	pthread_mutex_t* mutex_acceptedSocket = parameter.mutex_acceptedSocket;
 
+	// set up timeout
+	struct timeval tv;
+	tv.tv_sec = 0;
+	tv.tv_usec = SERVER_TIMEOUT_VALUE;
+	setsockopt(listeningSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+
 	int tempAcceptedSocket = 0;
 
 	while(!(*shutDown))
 	{
 		if(tempAcceptedSocket == 0)
 			tempAcceptedSocket = returnSocketToClient(listeningSocket);
+
 		if(tempAcceptedSocket == -1)
 		{
 			printf("accepting connection timed out\n");
 			*shutDown = true;
 			continue;
 		}
+
 		else if(tempAcceptedSocket == -2)
 		{
 			printf("error while accepting connection\n");
 			*shutDown = true;
 			continue;
 		}
+
 		else if(tempAcceptedSocket == -3)
 		{
 			printf("error finding client address information\n");
@@ -1091,14 +1193,17 @@ int saveCacheToFile(struct requestCache *cachePtr) // #saveCacheToFile
 {
 	FILE* cacheMetadata = NULL;
 	cacheMetadata = fopen(CACHE_METADATA_FILE_NAME, "w");
+
 	if(cacheMetadata == NULL)
 		return -1;
+
 	FILE* cacheFile = NULL;
 	cacheFile = fopen(CACHE_FILE_NAME, "w");
+
 	if(cacheFile == NULL)
 		return -1;
-	
-	for(int i = 0;i<CACHE_SIZE;i++)
+
+	for(int i = 0; i < CACHE_SIZE; i++)
 	{
 		fprintf(cacheMetadata, "%d\n%s\n%d\n", cachePtr[i].objectNameLength, cachePtr[i].objectName, cachePtr[i].valueLength);
 		fwrite(cachePtr[i].value, sizeof(unsigned char), cachePtr[i].valueLength, cacheFile);
@@ -1113,14 +1218,17 @@ int readCacheFromFile(struct requestCache *cachePtr) // #readCacheFromFile
 {
 	FILE* cacheMetadata = NULL;
 	cacheMetadata = fopen(CACHE_METADATA_FILE_NAME, "r");
+
 	if(cacheMetadata == NULL)
 		return -1;
+
 	FILE* cacheFile = NULL;
 	cacheFile = fopen(CACHE_FILE_NAME, "r");
+
 	if(cacheFile == NULL)
 		return -1;
-	
-	for(int i = 0;i<CACHE_SIZE;i++)
+
+	for(int i = 0; i < CACHE_SIZE; i++)
 	{
 		fscanf(cacheMetadata, "%d", &cachePtr[i].objectNameLength);
 		// advance offset by 1
