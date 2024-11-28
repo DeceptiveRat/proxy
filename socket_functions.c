@@ -123,8 +123,8 @@ void cleanMutexes(pthread_mutex_t* mutexes)
 struct keyPair proxyKey;
 void handleConnection() // #handleConnection
 {
-	proxyKey.e = 17;
-	int p = 13;
+	proxyKey.e = 5;
+	int p = 17;
 	int q = 19;
 	proxyKey.d = getDecryptionKey(proxyKey.e, getPhi(p, q));
 	proxyKey.n = p*q;
@@ -258,7 +258,7 @@ void handleConnection() // #handleConnection
 					temp->clientKey.n += temp->dataFromClient[i] - '0';
 				}
 				printf("Got Key. e: %d, n: %d\n", temp->clientKey.e, temp->clientKey.n);
-				sendString(temp->clientSocket, "17 247\n", 7);
+				sendString(temp->clientSocket, "5 323\n", 7);
 				receiveLength = recv(temp->clientSocket, temp->dataFromClient, BUFFER_SIZE, 0);
 
 				if(receiveLength == -1)
@@ -708,7 +708,11 @@ void* threadFunction(void* args) // #threadFunction
 	memcpy(connectedTo, parameters.connectedTo, NAME_LENGTH + 1);
 	bool* shutDown = parameters.shutDown;
 	bool isHTTPS = parameters.isHTTPS;
-	struct keyPair clientKey= *parameters.clientKey;
+	struct keyPair clientKey;
+	if(parameters.clientKey != NULL)
+	{
+		clientKey= *parameters.clientKey;
+	}
 	// read/write buffer info
 	int* readBufferSize = parameters.readBufferSize;
 	int* writeBufferSize = parameters.writeBufferSize;
@@ -783,6 +787,10 @@ void* threadFunction(void* args) // #threadFunction
 				readCount = 0;
 				readFromCache = NULL;
 
+				pthread_mutex_lock(mutex_writeBuffer);
+				*writeBufferSize = 0;
+				pthread_mutex_unlock(mutex_writeBuffer);
+				
 				// set cache offset to -1 indicating no need to cache this request
 				cacheOffset = -1;
 			}

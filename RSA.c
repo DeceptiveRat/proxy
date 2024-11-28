@@ -74,5 +74,7 @@ int getDecryptionKey(int e, int phi)
 	int d;
 	int x;
 	extendedEuclideanAlgorithm(phi, e, &x, &d);
+	if(d<0)
+		d+=phi;
 	return d;
 }
