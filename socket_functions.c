@@ -194,10 +194,12 @@ void handleConnection() // #handleConnection
 			temp->dataFromServer[0] = '\0';
 			int receiveLength = recv(temp->clientSocket, temp->dataFromClient, BUFFER_SIZE, 0);
 
-			if(receiveLength == -1)
+			// TODO temporary solution. Change later
+			while((receiveLength = recv(temp->clientSocket, temp->dataFromClient, BUFFER_SIZE, 0) == -1))
 			{
 				if(errno == EAGAIN || errno == EWOULDBLOCK)
 				{
+				/*
 					pthread_mutex_lock(&mutex_outputFile);
 					printf("[   main   ] lost connection with %d:\n", connectionCount);
 					fprintf(temp->outputFilePtr, "[   main   ] lost connection with %d:\n", connectionCount);
@@ -207,6 +209,7 @@ void handleConnection() // #handleConnection
 					fprintf(outputFilePtr, "[   main   ] resetting connection...\n");
 					pthread_mutex_unlock(&mutex_outputFile);
 					close(temp->clientSocket);
+				*/
 					continue;
 				}
 				// clean up code
@@ -699,6 +702,11 @@ void* threadFunction(void* args) // #threadFunction
 				// reset value after use
 				readCount = 0;
 				readFromCache = NULL;
+
+				// no need to send request to web server
+				pthread_mutex_lock(mutex_writeBuffer);
+				*writeBufferSize = 0;
+				pthread_mutex_unlock(mutex_writeBuffer);
 
 				// set cache offset to -1 indicating no need to cache this request
 				cacheOffset = -1;
