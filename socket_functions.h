@@ -35,7 +35,7 @@ struct threadParameters
 	char connectedTo[NAME_LENGTH+1];
 	bool* shutDown;
 	bool isHTTPS;
-	struct keyPair* clientKey;
+	//struct keyPair* clientKey;
 
 	// read/write buffer info
 	int* writeBufferSize;

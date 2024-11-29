@@ -54,7 +54,9 @@ void setupConnectionResources(struct connectionResources* connections, int conne
 		connections[i].serverArgs.connectionID = i;
 		memcpy(connections[i].serverArgs.connectedTo, "server\0", 7);
 		connections[i].serverArgs.shutDown = &connections[i].shutDown;
+/* RSA
 		connections[i].serverArgs.clientKey = NULL;
+*/
 		// read/write buffer info
 		connections[i].serverArgs.writeBufferSize = &connections[i].dataFromServerSize;
 		connections[i].serverArgs.readBufferSize = &connections[i].dataFromClientSize;
@@ -75,7 +77,9 @@ void setupConnectionResources(struct connectionResources* connections, int conne
 		connections[i].clientArgs.connectionID = i;
 		memcpy(connections[i].clientArgs.connectedTo, "client\0", 7);
 		connections[i].clientArgs.shutDown = &connections[i].shutDown;
+/* RSA
 		connections[i].clientArgs.clientKey = &connections[i].clientKey;
+*/
 		// read/write buffer info
 		connections[i].clientArgs.writeBufferSize = &connections[i].dataFromClientSize;
 		connections[i].clientArgs.readBufferSize = &connections[i].dataFromServerSize;
@@ -120,14 +124,18 @@ void cleanMutexes(pthread_mutex_t* mutexes)
 	free(mutexes);
 }
 
+/* RSA
 struct keyPair proxyKey;
+*/
 void handleConnection() // #handleConnection
 {
+/* RSA
 	proxyKey.e = 5;
 	int p = 17;
 	int q = 19;
 	proxyKey.d = getDecryptionKey(proxyKey.e, getPhi(p, q));
 	proxyKey.n = p*q;
+*/
 
 	setDomainNames();
 
@@ -296,7 +304,9 @@ void handleConnection() // #handleConnection
 					fatal("receiving from client");
 				}
 
+/* RSA
 				decrypt(temp->dataFromClient, proxyKey.n, proxyKey.d, receiveLength);
+*/
 			}
 
 			pthread_mutex_lock(&mutex_outputFile);
@@ -401,7 +411,9 @@ void handleConnection() // #handleConnection
 				temp->clientArgs.isHTTPS = true;
 				temp->serverArgs.isHTTPS = true;
 
+/* RSA
 				encrypt(connectionEstablishedResponse, temp->clientKey.n, temp->clientKey.e, CONNECTION_ESTABLISHED_MESSAGE_LENGTH);
+*/
 				if(sendString(temp->clientSocket, connectionEstablishedResponse, CONNECTION_ESTABLISHED_MESSAGE_LENGTH) == 0)
 				{
 					// clean up code
@@ -709,10 +721,12 @@ void* threadFunction(void* args) // #threadFunction
 	bool* shutDown = parameters.shutDown;
 	bool isHTTPS = parameters.isHTTPS;
 	struct keyPair clientKey;
+/* RSA
 	if(parameters.clientKey != NULL)
 	{
 		clientKey= *parameters.clientKey;
 	}
+*/
 	// read/write buffer info
 	int* readBufferSize = parameters.readBufferSize;
 	int* writeBufferSize = parameters.writeBufferSize;
@@ -781,7 +795,9 @@ void* threadFunction(void* args) // #threadFunction
 				cacheOffsetWithData = -1;
 				// -----------------------------------------------
 
+/* RSA
 				encrypt(readFromCache, clientKey.n, clientKey.e, readCount);
+*/
 				sendString(socket, readFromCache, readCount);
 				// reset value after use
 				readCount = 0;
@@ -860,7 +876,9 @@ void* threadFunction(void* args) // #threadFunction
 		else
 		{
 			timeoutCount = 0;
+/* RSA
 			decrypt(tempReadBuffer, proxyKey.n, proxyKey.d, recvResult);
+*/
 
 			// debug ---------------------
 			if(recvResult == 0)
@@ -918,7 +936,9 @@ void* threadFunction(void* args) // #threadFunction
 						cacheOffsetWithData = -1;
 						// -----------------------------------------------
 
+/* RSA
 						encrypt(readFromCache, clientKey.n, clientKey.e, readCount);
+*/
 						sendString(socket, readFromCache, readCount);
 						// reset value after use
 						readCount = 0;
@@ -995,8 +1015,10 @@ void* threadFunction(void* args) // #threadFunction
 
 			memcpy(tempReadBuffer, readBuffer, *readBufferSize);
 			// encrypt before sending if it is for the client
+/* RSA
 			if(clientConnected)
 				encrypt(tempReadBuffer, clientKey.n, clientKey.e, *readBufferSize);
+*/
 
 			if(sendString(socket, tempReadBuffer, *readBufferSize) == 0)
 			{
