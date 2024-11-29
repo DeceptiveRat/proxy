@@ -194,12 +194,10 @@ void handleConnection() // #handleConnection
 			temp->dataFromServer[0] = '\0';
 			int receiveLength = recv(temp->clientSocket, temp->dataFromClient, BUFFER_SIZE, 0);
 
-			// TODO temporary solution. Change later
-			while((receiveLength = recv(temp->clientSocket, temp->dataFromClient, BUFFER_SIZE, 0) == -1))
+			if(receiveLength == -1)
 			{
 				if(errno == EAGAIN || errno == EWOULDBLOCK)
 				{
-				/*
 					pthread_mutex_lock(&mutex_outputFile);
 					printf("[   main   ] lost connection with %d:\n", connectionCount);
 					fprintf(temp->outputFilePtr, "[   main   ] lost connection with %d:\n", connectionCount);
@@ -209,7 +207,6 @@ void handleConnection() // #handleConnection
 					fprintf(outputFilePtr, "[   main   ] resetting connection...\n");
 					pthread_mutex_unlock(&mutex_outputFile);
 					close(temp->clientSocket);
-				*/
 					continue;
 				}
 				// clean up code

@@ -23,7 +23,7 @@
 #define CACHE_FILE_NAME "cache.txt"
 #define SERVER_TIMEOUT_VALUE 2
 #define CONNECTION_TIMEOUT_VALUE 2
-#define TIMEOUT_COUNT 5000
+#define TIMEOUT_COUNT 20000
 
 struct threadParameters
 {
